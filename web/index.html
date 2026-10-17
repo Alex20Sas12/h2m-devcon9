@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Market Desk — Headline to Market</title>
+<style>
+:root{--bg:#0f1117;--card:#181b24;--line:#2a2e3b;--fg:#e8eaf0;--mut:#9aa1b2;--acc:#4f8cff;--ok:#3ddc84;--no:#ff6b6b;--warn:#ffc857}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,Segoe UI,sans-serif}
+.wrap{max-width:880px;margin:0 auto;padding:24px 16px}
+h1{font-size:20px;margin:0 0 4px}p.sub{color:var(--mut);margin:0 0 20px;font-size:13px}
+textarea,input{width:100%;background:var(--card);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:10px;font:inherit}
+button{background:var(--acc);border:0;color:#fff;padding:9px 16px;border-radius:8px;font:inherit;cursor:pointer}
+button.sec{background:var(--card);border:1px solid var(--line);color:var(--fg)}
+button.ok{background:var(--ok);color:#04140b}button.no{background:var(--no)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
+.badge.draft{background:#1c3a5e;color:#8ec1ff}.badge.reject{background:#4a2020;color:#ff9d9d}
+.badge.approved{background:#14402a;color:#7ee2a8}.badge.discarded{background:#333;color:#aaa}.badge.pending{background:#453a17;color:var(--warn)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.kv{margin:6px 0}.kv b{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px;display:block}
+.kv .v{white-space:pre-wrap}
+.editable:focus{outline:2px solid var(--acc)}
+.reason{border-left:3px solid var(--no);padding-left:10px;margin:6px 0}
+ul.edge{margin:4px 0;padding-left:20px}
+.spin{color:var(--mut);font-style:italic}
+.meta{color:var(--mut);font-size:12px;margin-top:8px}
+#err{color:var(--no);margin:8px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Market Desk</h1>
+<p class="sub">Paste a headline → get a settleable market draft, or an honest reason it can't be one. Nothing goes live until you approve.</p>
+
+<div class="card">
+  <textarea id="headline" rows="2" placeholder="Headline, e.g. RBI likely to cut repo rate in December"></textarea>
+  <textarea id="snippet" rows="2" placeholder="Optional article snippet (context for the drafter)" style="margin-top:8px"></textarea>
+  <div class="row" style="margin-top:10px"><button id="go">Draft market</button><span id="busy"></span></div>
+  <div id="err"></div>
+</div>
+
+<h2 style="font-size:16px">Review queue</h2>
+<div id="queue"><span class="spin">loading…</span></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(path,opts={}){
+  const r=await fetch(path,{headers:{'Content-Type':'application/json'},...opts});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.detail||d.error||r.status);
+  return d;
+}
+
+async function draft(){
+  $('err').textContent='';$('busy').textContent='drafting… (~20s, includes semantic checks)';
+  try{
+    const d=await api('/api/draft',{method:'POST',body:JSON.stringify({headline:$('headline').value,snippet:$('snippet').value})});
+    $('headline').value='';load();
+  }catch(e){$('err').textContent=e.message}
+  $('busy').textContent='';
+}
+
+function verdictHtml(id,v,editable){
+  if(v.kind==='reject')
+    return v.reasons.map(r=>`<div class="reason">${esc(r)}</div>`).join('')+`<div class="kv"><b>Rewrite hint</b><div class="v">${esc(v.rewrite_hint)}</div></div>`;
+  const f=(k,label,multiline)=>{
+    const val=v[k];
+    if(k==='edge_cases')return `<div class="kv"><b>${label}</b><ul class="edge">${val.map(e=>`<li>${esc(e)}</li>`).join('')}</ul></div>`;
+    const tag=multiline?'div':'div';
+    return `<div class="kv"><b>${label}</b><${tag} class="v${editable?' editable':''}" ${editable?`contenteditable="true" data-f="${k}" data-id="${id}"`:''}>${esc(val)}</${tag}></div>`;
+  };
+  return f('question','Question')+f('close_date','Closes (UTC)')+f('resolution_source_name','Resolution source')+
+    f('resolution_source_url','Source URL')+f('resolution_rule','Resolution rule',1)+f('yes_criteria','YES if',1)+
+    f('no_criteria','NO if',1)+f('edge_cases','Edge cases')+f('rationale','Why (model\'s reasoning)',1);
+}
+
+async function load(){
+  const rows=await api('/api/drafts');
+  $('queue').innerHTML=rows.length?rows.map(r=>`
+    <div class="card">
+      <div class="row">
+        <span class="badge ${r.kind}">${r.kind}</span>
+        <span class="badge ${r.status}">${r.status}</span>
+        <b style="flex:1">${esc(r.headline)}</b>
+      </div>
+      ${verdictHtml(r.id,r.verdict,r.status==='pending'&&r.kind==='draft')}
+      ${r.editor_edits&&Object.keys(r.editor_edits).length?`<div class="meta">edited by you: ${esc(Object.keys(r.editor_edits).join(', '))}</div>`:''}
+      <div class="meta">${esc(r.created_at)} · model ${esc(r.model||'?')} · id ${r.id}</div>
+      ${r.status==='pending'?`<div class="row" style="margin-top:8px">
+        <button class="ok" onclick="saveEdits('${r.id}').then(()=>decide('${r.id}','approve'))">Approve</button>
+        <button class="no" onclick="decide('${r.id}','discard')">Discard</button>
+        <button class="sec" onclick="saveEdits('${r.id}')">Save edits</button>
+      </div>`:''}
+    </div>`).join(''):'<span class="spin">nothing yet — draft a market above</span>';
+}
+
+async function saveEdits(id){
+  const fields={};
+  document.querySelectorAll(`[data-id="${id}"][data-f]`).forEach(el=>{fields[el.dataset.f]=el.textContent.trim()});
+  if(Object.keys(fields).length)await api(`/api/drafts/${id}/edit`,{method:'POST',body:JSON.stringify({fields})});
+}
+async function decide(id,what){try{await api(`/api/drafts/${id}/${what}`,{method:'POST'});load()}catch(e){alert(e.message)}}
+$('go').onclick=draft;
+load();
+</script>
+</body>
+</html>

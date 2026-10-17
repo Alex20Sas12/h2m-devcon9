@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+desk.sqlite3
+.env
+uvicorn.log
+golden_run*.log
