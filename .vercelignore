@@ -1,0 +1,6 @@
+desk.sqlite3
+.env
+.env.local
+.git
+golden_run*.log
+uvicorn.log

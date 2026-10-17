@@ -1,5 +1,7 @@
 # Headline to Market
 
+**Live demo:** https://market-desk-seven.vercel.app (real LLM behind it — paste a headline)
+
 Paste a news headline, get back a **settleable** prediction market — or an honest explanation of why that headline can't become one. Built for the *Road to Devcon 9* builder challenge (Loops House), problem [headline-to-market](https://www.loops.house/road-to-devcon-ix).
 
 Ananya's bad market was *"Will Bengaluru traffic improve?"* — it sat open for a month because nobody could say who had won. This tool refuses to produce that. It rejects headlines with vague verbs, missing thresholds, or no public resolution source, and every draft it does produce names **one specific body**, a **stable URL**, a **deadline**, explicit YES/NO conditions, and rules for the awkward cases (data revisions, delayed releases, exact-threshold ties).

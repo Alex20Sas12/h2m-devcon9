@@ -4,3 +4,6 @@ desk.sqlite3
 .env
 uvicorn.log
 golden_run*.log
+
+.vercel
+.env*

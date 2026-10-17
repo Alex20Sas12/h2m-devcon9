@@ -80,5 +80,13 @@ def api_discard(did: str):
 
 
 @app.get("/")
+@app.get("/api/index")
 def index():
-    return FileResponse(Path(__file__).parent / "web" / "index.html")
+    # Vercel rewrites non-API paths to /api/index (2026 rewrite routing),
+    # so serve the UI under both. local: repo-root/web; serverless: bundled.
+    for cand in (Path(__file__).parent.parent / "web" / "index.html",
+                 Path(__file__).parent / "web" / "index.html",
+                 Path("/var/task/web/index.html")):
+        if cand.exists():
+            return FileResponse(cand)
+    raise HTTPException(404, "web UI not bundled; use /docs for the API")

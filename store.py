@@ -8,7 +8,18 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path(os.environ.get("H2M_DB", Path(__file__).parent / "desk.sqlite3"))
+def _db_path() -> Path:
+    p = Path(os.environ.get("H2M_DB", Path(__file__).parent / "desk.sqlite3"))
+    # Read-only filesystems (serverless /var/task): fall back to the temp dir.
+    # ponytail: per-instance DB on serverless — fine for a demo desk, add a
+    # hosted DB if deployments ever need shared state across lambdas.
+    if not os.access(p.parent if p.parent != p else Path("."), os.W_OK):
+        import tempfile
+        p = Path(tempfile.gettempdir()) / "desk.sqlite3"
+    return p
+
+
+DB_PATH = _db_path()
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS drafts (

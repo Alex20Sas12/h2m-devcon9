@@ -11,6 +11,7 @@ reaches an editor.
 from __future__ import annotations
 
 import json
+import os
 
 from llm import chat, extract_json
 from prompt import build_messages
@@ -27,10 +28,10 @@ cannot yield a settleable market, return kind="reject" instead with honest
 reasons and a rewrite_hint. JSON only."""
 
 # Explicit, finite retry caps (no open-ended loops):
-MAX_REPAIR_TURNS = 1   # validation-failure repair attempts given to the model
-MAX_JSON_RETRIES = 1   # "reply was not valid JSON" re-asks
+MAX_REPAIR_TURNS = int(os.environ.get("H2M_MAX_REPAIR", "1"))   # repair attempts given to the model
+MAX_JSON_RETRIES = int(os.environ.get("H2M_MAX_JSON_RETRIES", "1"))  # "not valid JSON" re-asks
 
-TIMEOUT_S = 120        # per model call, passed to the HTTP client
+TIMEOUT_S = int(os.environ.get("H2M_TIMEOUT", "120"))  # per model call, passed to the HTTP client
 
 
 def _parse(raw: dict, model: str) -> MarketResult:
