@@ -26,6 +26,12 @@ Fix ONLY these problems and return the complete corrected JSON object
 cannot yield a settleable market, return kind="reject" instead with honest
 reasons and a rewrite_hint. JSON only."""
 
+# Explicit, finite retry caps (no open-ended loops):
+MAX_REPAIR_TURNS = 1   # validation-failure repair attempts given to the model
+MAX_JSON_RETRIES = 1   # "reply was not valid JSON" re-asks
+
+TIMEOUT_S = 120        # per model call, passed to the HTTP client
+
 
 def _parse(raw: dict, model: str) -> MarketResult:
     if raw.get("kind") == "reject":
@@ -38,40 +44,59 @@ def _parse(raw: dict, model: str) -> MarketResult:
 
 def draft_market(headline: str, snippet: str = "", model: str | None = None) -> MarketResult:
     msgs = build_messages(headline, snippet)
-    raw_text = chat(msgs, model=model)
     used_model = model or "default"
-    try:
-        raw = extract_json(raw_text)
-        result = _parse(raw, used_model)
-    except (ValueError, KeyError, TypeError) as e:
-        # Not even parseable -> ask once for clean JSON; a second failure is a rejection.
-        msgs.append({"role": "assistant", "content": raw_text[:1500]})
-        msgs.append({"role": "user",
-                     "content": f"That reply was not valid JSON ({e}). Return ONLY the JSON object."})
-        raw = extract_json(chat(msgs, model=model))
-        result = _parse(raw, used_model)
+
+    # --- get one parseable reply, capped re-asks ---
+    result = None
+    for attempt in range(MAX_JSON_RETRIES + 1):
+        raw_text = chat(msgs, model=model, timeout=TIMEOUT_S)
+        try:
+            result = _parse(extract_json(raw_text), used_model)
+            break
+        except (ValueError, KeyError, TypeError) as e:
+            msgs.append({"role": "assistant", "content": raw_text[:1500]})
+            msgs.append({"role": "user",
+                         "content": f"That reply was not valid JSON ({e}). Return ONLY the JSON object."})
+    if result is None:
+        # Cap reached: defined user-visible fallback instead of an uncaught 500.
+        return MarketResult(
+            verdict=Rejection(
+                reasons=["the model never returned parseable JSON (retries capped at "
+                         f"{MAX_JSON_RETRIES}) — draft manually or retry later"],
+                rewrite_hint="Nothing wrong with the headline; the drafter failed. Use 'draft manually' in the review desk.",
+            ),
+            model=used_model,
+        )
 
     if result.verdict.kind == "reject":
         return result
+    assert isinstance(result.verdict, MarketDraft)
 
-    problems = semantic_check(result.verdict)
-    if not problems:
-        return result
+    # --- semantic validation with a capped repair loop ---
+    problems: list[str] = []
+    for turn in range(MAX_REPAIR_TURNS + 1):
+        problems = semantic_check(result.verdict)
+        if not problems:
+            return result
+        if turn == MAX_REPAIR_TURNS:
+            break
+        msgs.append({"role": "assistant",
+                     "content": json.dumps(result.verdict.model_dump(mode="json"), ensure_ascii=False)})
+        msgs.append({"role": "user",
+                     "content": REPAIR_PROMPT.format(problems="\n".join(f"- {p}" for p in problems))})
+        try:
+            repaired = _parse(extract_json(chat(msgs, model=model, timeout=TIMEOUT_S)), used_model)
+        except (ValueError, KeyError, TypeError):
+            break
+        if repaired.verdict.kind == "reject":
+            return repaired
+        assert isinstance(repaired.verdict, MarketDraft)
+        result = repaired
 
-    # One repair turn with the exact failures.
-    msgs.append({"role": "assistant", "content": json.dumps(result.verdict.model_dump(mode="json"), ensure_ascii=False)})
-    msgs.append({"role": "user", "content": REPAIR_PROMPT.format(problems="\n".join(f"- {p}" for p in problems))})
-    repaired = _parse(extract_json(chat(msgs, model=model)), used_model)
-
-    if repaired.verdict.kind == "reject":
-        return repaired
-    problems2 = semantic_check(repaired.verdict)
-    if not problems2:
-        return repaired
-    # Still broken -> honest rejection instead of shipping a bad draft.
+    # Still broken after the capped repair -> honest, user-visible fallback rejection.
     return MarketResult(
         verdict=Rejection(
-            reasons=[f"draft could not be made settleable: {p}" for p in problems2],
+            reasons=[f"validation failed, draft could not be made settleable: {p}" for p in problems],
             rewrite_hint="Rewrite the headline to name a metric, a threshold and a reporting body.",
         ),
         model=used_model,
