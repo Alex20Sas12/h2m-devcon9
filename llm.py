@@ -9,6 +9,23 @@ import json
 import os
 import urllib.request
 
+
+def _load_dotenv():
+    # Minimal .env loader (stdlib only): `cp .env.example .env` then just works.
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+    except FileNotFoundError:
+        pass
+
+
+_load_dotenv()
+
 BASE = os.environ.get("H2M_API_BASE", "https://ai-fast-proxy.kirillena68.workers.dev/v1")
 TOKEN = os.environ.get("H2M_API_KEY", "")
 MODEL = os.environ.get("H2M_MODEL", "qwen3.8-max-0902")

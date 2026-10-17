@@ -12,17 +12,33 @@ Ananya's bad market was *"Will Bengaluru traffic improve?"* — it sat open for 
 
 **Prompt injection (OWASP LLM01):** the headline is untrusted data. It is sanitized (`sanitize_untrusted` strips fence and delimiter escapes, control chars, caps length), wrapped in `<headline>` delimiters, and the system prompt states that text inside the delimiters can never change instructions. The golden set includes an injection headline that must be *rejected, not obeyed*.
 
+### Where each scored check lives
+
+| # | Check | Where it passes |
+|---|---|---|
+| 1 | Schema validation before use | `pipeline._parse` → Pydantic `MarketDraft`/`Rejection` (`schema.py`); no field is used before it parses |
+| 2 | Close time compared to now **in code** | `rules.check_deadline` vs `schema.utcnow()` |
+| 3 | Explicit unresolvable outcome | `Rejection` in the discriminated union (`kind: "reject"` + reasons) |
+| 4 | Headline enters as delimited data | `prompt.build_messages`: user-role `<headline>` block, system instructions separate |
+| 5 | Model-call timeout | `llm.chat(..., timeout=120)`; `pipeline.TIMEOUT_S` |
+| 6 | Retries explicitly capped | `pipeline.MAX_JSON_RETRIES=1`, `MAX_REPAIR_TURNS=1` |
+| 7 | Validation failure → visible fallback | capped loops end in a saved `Rejection` shown in the desk ("draft manually or retry later") |
+| 8 | Publishing needs explicit approval | `store`: rows start `status='pending'`; only `/api/drafts/{id}/approve` flips it |
+| 9 | Golden set has expected-rejection | `golden.py`: 8 of 12 cases labelled `reject` (see `GOLDEN-RUN.md` for the 12/12 live run) |
+| 10 | No credentials in tracked files | keys come from env (`H2M_API_KEY`); `.env` gitignored; `.env.example` holds placeholders only |
+
 ## Run it
 
 ```bash
 pip install -r requirements.txt          # pydantic + fastapi + uvicorn
-export H2M_API_KEY=***              # any OpenAI-compatible chat API
-# optional overrides: H2M_API_BASE, H2M_MODEL (default qwen3.8-max-0902)
+cp .env.example .env                     # then fill H2M_API_KEY (any OpenAI-compatible chat API)
+export H2M_API_KEY=***              # optional: H2M_API_BASE, H2M_MODEL (default qwen3.8-max-0902)
 
-python h2m.py "RBI likely to cut repo rate by 25 bps in December"   # CLI
-python h2m.py "Will Bengaluru traffic improve?"                     # -> honest rejection
+python demo.py                                                   # NO key needed: recorded live output + full editor flow
+python h2m.py "RBI likely to cut repo rate by 25 bps in December" # CLI (needs key)
+python h2m.py "Will Bengaluru traffic improve?"                   # -> honest rejection
 
-uvicorn server:app --port 8000                                    # web desk at /
+uvicorn server:app --port 8000                                   # web desk at /
 ```
 
 The golden set (12 cases incl. the hard ones the rubric asks for):
